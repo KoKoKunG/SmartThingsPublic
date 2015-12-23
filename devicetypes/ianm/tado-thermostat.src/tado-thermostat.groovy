@@ -13,8 +13,12 @@
  *	Tado Thermostat
  *
  *	Author: Ian M
- *	Date: 2015-12-04
+ *
+ *	Updates: 
+ *	2015-12-23	Added functionality to change thermostat settings
+ *	2015-12-04	Initial release
  */
+ 
 preferences {
 	input("username", "text", title: "Username", description: "Your Tado username")
 	input("password", "password", title: "Password", description: "Your Tado password")
@@ -25,9 +29,13 @@ metadata {
 		capability "Actuator"
         capability "Temperature Measurement"
 		capability "Thermostat"
-        //capability "Presence Sensor"
+        capability "Presence Sensor"
 		capability "Polling"
 		capability "Refresh"
+        capability "Switch"
+        
+        command "heatingSetpointUp"
+        command "heatingSetpointDown"
 	}
 
 	// simulator metadata
@@ -39,22 +47,19 @@ metadata {
 
 	tiles(scale: 2){
       	multiAttributeTile(name: "thermostat", width: 6, height: 4, type:"lighting") {
-			tileAttribute("device.temperature", key:"PRIMARY_CONTROL", canChangeIcon: true, canChangeBackground: true){
-            	//attributeState "HOME", label:'${currentValue}° C', unit:"C", backgroundColor:"#fab907", icon:"st.Home.home2"
-            	//attributeState "AWAY", label:'${currentValue}° C', unit:"C", backgroundColor:"#62aa12", icon:"st.Outdoor.outdoor18"
-            	//attributeState "SLEEP", label:'${currentValue}° C', unit:"C", backgroundColor:"#0164a8", icon:"st.Bedroom.bedroom2"
+			tileAttribute("device.temperature", key:"PRIMARY_CONTROL", canChangeIcon: true){
             	attributeState "default", label:'${currentValue}° C', unit:"C", backgroundColor:"#fab907", icon:"st.Home.home1"
             }
-            tileAttribute ("controlPhase", key: "SECONDARY_CONTROL") {
-				attributeState "controlPhase", label:'${currentValue}'
+            tileAttribute ("thermostatOperatingState", key: "SECONDARY_CONTROL") {
+				attributeState "thermostatOperatingState", label:'${currentValue}'
 			}
 		}
         
-        valueTile("setPointTemp", "device.setPointTemp", width: 2, height: 2, decoration: "flat") {
+        valueTile("heatingSetpoint", "device.heatingSetpoint", width: 2, height: 1, decoration: "flat") {
 			state("default", label: '${currentValue}° C')
 		}
 
-        standardTile("autoOperation", "device.autoOperation", width: 2, height: 2, canChangeBackground:true) {
+        standardTile("thermostatMode", "device.thermostatMode", width: 2, height: 2) {
             state "HOME", label:'${name}', backgroundColor:"#fab907", icon:"st.Home.home2"
             state "AWAY", label:'${name}', backgroundColor:"#62aa12", icon:"st.Outdoor.outdoor18"
             state "SLEEP", label:'${name}', backgroundColor:"#0164a8", icon:"st.Bedroom.bedroom2"
@@ -62,17 +67,37 @@ metadata {
             state "MANUAL", label:'${name}', backgroundColor:"#ffffff", icon:"st.Weather.weather1"
 		}
         
-        /*standardTile("presence", "device.presence", width: 2, height: 2, canChangeBackground: true) {
+        standardTile("presence", "device.presence", width: 2, height: 2) {
 			state "present", labelIcon:"st.presence.tile.present", backgroundColor:"#53a7c0"
 			state "not present", labelIcon:"st.presence.tile.not-present", backgroundColor:"#ebeef2"
-		}*/
+		}
       	
-        standardTile("refresh", "device.switch", inactiveLabel: false, width: 2, height: 2, decoration: "flat") {
+        standardTile("refresh", "device.switch", width: 2, height: 2, decoration: "flat") {
 			state "default", label:"", action:"refresh.refresh", icon:"st.secondary.refresh"
 		}
 		
+        standardTile("setAuto", "device.thermostat", width: 2, height: 1, decoration: "flat") {
+			state "default", label:"Auto", action:"thermostat.auto"
+		}
+
+        standardTile("setManual", "device.thermostat", width: 2, height: 1, decoration: "flat") {
+			state "default", label:"Manual", action:"thermostat.heat"
+		}
+
+        standardTile("setOff", "device.thermostat", width: 2, height: 1, decoration: "flat") {
+			state "default", label:"Off", action:"thermostat.off"
+		}
+        
+        standardTile("heatingSetpointUp", "device.heatingSetpoint", canChangeIcon: false, decoration: "flat") {
+            state "heatingSetpointUp", label:'  ', action:"heatingSetpointUp", icon:"st.thermostat.thermostat-up"
+        }
+
+        standardTile("heatingSetpointDown", "device.heatingSetpoint", canChangeIcon: false, decoration: "flat") {
+            state "heatingSetpointDown", label:'  ', action:"heatingSetpointDown", icon:"st.thermostat.thermostat-down", backgroundColor:"#bc2323"
+        }
+
 		main "thermostat"
-		details (["thermostat","refresh","setPointTemp","autoOperation"])
+		details (["thermostat","refresh","heatingSetpoint","thermostatMode","heatingSetpointUp","heatingSetpointDown","setAuto","setManual","setOff"])
 	}
 }
 
@@ -91,9 +116,14 @@ private parseResponse(resp) {
         if(resp.data.controlPhase == "UNDEFINED"){
         	controlPhase = "FROST PROTECTION"
         }
-        log.debug("Read controlPhase: " + controlPhase)
+        log.debug("Read controlPhase1: " + controlPhase)
         
-        def setPointTemp = Math.round(resp.data.setPointTemp)
+        def setPointTemp 
+        if (resp.data.setPointTemp != null){
+        	setPointTemp = Math.round(resp.data.setPointTemp)
+        }else{
+        	setPointTemp = "--"
+        }
         log.debug("Read setPointTemp: " + setPointTemp)
         
         def autoOperation = resp.data.autoOperation
@@ -104,13 +134,21 @@ private parseResponse(resp) {
         }
         log.debug("Read autoOperation: " + autoOperation)
         
+        def presence
+        if(resp.data.operation == "AWAY"){
+        	presence = "not present"
+        }else {
+        	presence = "present"
+        }
+        log.debug("Read presence: " + presence)
+        
         def temperatureUnit = "C"
         
         sendEvent(name: 'temperature', value: temperature, unit: temperatureUnit)
-        sendEvent(name: 'setPointTemp', value: setPointTemp, unit: temperatureUnit)
-		sendEvent(name: 'controlPhase', value: controlPhase)
-        sendEvent(name: 'autoOperation', value: autoOperation)
-        
+        sendEvent(name: 'heatingSetpoint', value: setPointTemp, unit: temperatureUnit)
+		sendEvent(name: 'thermostatOperatingState', value: controlPhase)
+        sendEvent(name: 'thermostatMode', value: autoOperation)       
+        sendEvent(name: 'presence', value: presence)
     }else if(resp.status == 201){
         log.debug("Something was created/updated")
     }
@@ -126,6 +164,45 @@ def refresh() {
 	log.debug "Executing 'refresh'"
     sendCommand("getCurrentState")
 }
+
+def auto() {
+	log.debug "Executing 'auto'"
+	autoCommand()
+    refresh()
+}
+
+def off() {
+	log.debug "Executing 'off'"
+	offCommand()
+    refresh()
+}
+
+def heat() {
+	log.debug "Executing 'heat'"
+	manualCommand()
+    refresh()
+}
+
+def setHeatingSetpoint(targetTemperature) {
+	log.debug "Executing 'setHeatingSetpoint'"
+    log.debug "Target Temperature ${targetTemperature}"
+    setTempCommand(targetTemperature)
+	refresh()
+}
+
+def heatingSetpointUp(){
+	int newSetpoint = device.currentValue("heatingSetpoint") + 1
+	log.debug "Setting heatingSetpoint up to: ${newSetpoint}"
+	setHeatingSetpoint(newSetpoint)
+}
+
+def heatingSetpointDown(){
+	int newSetpoint = device.currentValue("heatingSetpoint") - 1
+	log.debug "Setting heatingSetpoint down to: ${newSetpoint}"
+	setHeatingSetpoint(newSetpoint)
+}
+
+
 
 private sendCommand(path, method="GET", body=null) {
     //def accessToken = getAccessToken()
@@ -159,3 +236,95 @@ private sendCommand(path, method="GET", body=null) {
 
 
 // Commands to device
+
+def autoCommand() {
+    def method = "GET"
+    def pollParams = [
+        uri: "https://my.tado.com",
+        path: "/mobile/1.9/updateThermostatSettings",
+        requestContentType: "application/json",
+    	query: [username:settings.username, password:settings.password, setMode:"AUTO"],
+        body: null
+    ]
+    
+    log.debug(method+" Http Params ("+pollParams+")")
+    
+    try{
+        log.debug "Executing 'sendCommand.setAuto'"
+        httpGet(pollParams) { resp ->            
+            //log.debug resp.data
+            //parseResponse(resp)
+        }        
+    } catch(Exception e){
+    	debug("___exception: " + e)
+    }
+}
+
+def offCommand() {
+    def method = "GET"
+    def pollParams = [
+        uri: "https://my.tado.com",
+        path: "/mobile/1.9/updateThermostatSettings",
+        requestContentType: "application/json",
+    	query: [username:settings.username, password:settings.password, setMode:"NO_FREEZE"],
+        body: null
+    ]
+    
+    log.debug(method+" Http Params ("+pollParams+")")
+    
+    try{
+        log.debug "Executing 'sendCommand.setOff'"
+        httpGet(pollParams) { resp ->            
+            //log.debug resp.data
+            //parseResponse(resp)
+        }        
+    } catch(Exception e){
+    	debug("___exception: " + e)
+    }
+}
+
+def manualCommand() {
+    def method = "GET"
+    def pollParams = [
+        uri: "https://my.tado.com",
+        path: "/mobile/1.9/updateThermostatSettings",
+        requestContentType: "application/json",
+    	query: [username:settings.username, password:settings.password, setMode:"MANUAL"],
+        body: null
+    ]
+    
+    log.debug(method+" Http Params ("+pollParams+")")
+    
+    try{
+        log.debug "Executing 'sendCommand.setManual'"
+        httpGet(pollParams) { resp ->            
+            //log.debug resp.data
+            //parseResponse(resp)
+        }        
+    } catch(Exception e){
+    	debug("___exception: " + e)
+    }
+}
+
+def setTempCommand(targetTemperature) {
+    def method = "GET"
+    def pollParams = [
+        uri: "https://my.tado.com",
+        path: "/mobile/1.9/updateThermostatSettings",
+        requestContentType: "application/json",
+    	query: [username:settings.username, password:settings.password, setMode:"MANUAL", manualTemp:targetTemperature],
+        body: null
+    ]
+    
+    log.debug(method+" Http Params ("+pollParams+")")
+    
+    try{
+        log.debug "Executing 'sendCommand.setTempCommand' to ${targetTemperature}"
+        httpGet(pollParams) { resp ->            
+            //log.debug resp.data
+            //parseResponse(resp)
+        }        
+    } catch(Exception e){
+    	debug("___exception: " + e)
+    }
+}
