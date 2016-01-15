@@ -15,6 +15,7 @@
  *	Author: Ian M
  *
  *	Updates: 
+ *  2016-01-15  Refactored API request code and added querying/display of humidity
  *	2015-12-23	Added functionality to change thermostat settings
  *	2015-12-04	Initial release
  */
@@ -32,10 +33,11 @@ metadata {
         capability "Presence Sensor"
 		capability "Polling"
 		capability "Refresh"
-        capability "Switch"
+        capability "Relative Humidity Measurement"
         
         command "heatingSetpointUp"
         command "heatingSetpointDown"
+        command "auto"
 	}
 
 	// simulator metadata
@@ -72,10 +74,14 @@ metadata {
 			state "not present", labelIcon:"st.presence.tile.not-present", backgroundColor:"#ebeef2"
 		}
       	
-        standardTile("refresh", "device.switch", width: 2, height: 2, decoration: "flat") {
+        standardTile("refresh", "device.switch", width: 2, height: 1, decoration: "flat") {
 			state "default", label:"", action:"refresh.refresh", icon:"st.secondary.refresh"
-		}
-		
+		}		
+        
+        valueTile("humidity", "device.humidity", width: 2, height: 1, decoration: "flat") {
+            state "default", label:'Humidity: ${currentValue}%'
+        }
+        
         standardTile("setAuto", "device.thermostat", width: 2, height: 1, decoration: "flat") {
 			state "default", label:"Auto", action:"thermostat.auto"
 		}
@@ -96,15 +102,23 @@ metadata {
             state "heatingSetpointDown", label:'  ', action:"heatingSetpointDown", icon:"st.thermostat.thermostat-down", backgroundColor:"#bc2323"
         }
 
+        
+        standardTile("thermostatFanMode", "device.thermostatFanMode", decoration: "flat") {
+            state "HOME", label:'${name}', backgroundColor:"#fab907", icon:"st.Home.home2"
+            state "AWAY", label:'${name}', backgroundColor:"#62aa12", icon:"st.Outdoor.outdoor18"
+            state "SLEEP", label:'${name}', backgroundColor:"#0164a8", icon:"st.Bedroom.bedroom2"
+            state "OFF", label:'${name}', backgroundColor:"#ffffff", icon:"st.switches.switch.off"
+            state "MANUAL", label:'${name}', backgroundColor:"#ffffff", icon:"st.Weather.weather1"
+        }
+
 		main "thermostat"
-		details (["thermostat","refresh","heatingSetpoint","thermostatMode","heatingSetpointUp","heatingSetpointDown","setAuto","setManual","setOff"])
+		details (["thermostat","humidity","heatingSetpoint","thermostatMode","refresh","heatingSetpointUp","heatingSetpointDown","setAuto","setManual","setOff"])
 	}
 }
 
 // Parse incoming device messages to generate events
 private parseResponse(resp) {
     log.debug("Executing parseResponse: "+resp.data)
-    //log.debug("Output success: "+resp.data.success)
     log.debug("Output status: "+resp.status)
     if(resp.status == 200) {
     	log.debug("Executing parseResponse.successTrue")
@@ -116,7 +130,7 @@ private parseResponse(resp) {
         if(resp.data.controlPhase == "UNDEFINED"){
         	controlPhase = "FROST PROTECTION"
         }
-        log.debug("Read controlPhase1: " + controlPhase)
+        log.debug("Read controlPhase: " + controlPhase)
         
         def setPointTemp 
         if (resp.data.setPointTemp != null){
@@ -147,10 +161,32 @@ private parseResponse(resp) {
         sendEvent(name: 'temperature', value: temperature, unit: temperatureUnit)
         sendEvent(name: 'heatingSetpoint', value: setPointTemp, unit: temperatureUnit)
 		sendEvent(name: 'thermostatOperatingState', value: controlPhase)
-        sendEvent(name: 'thermostatMode', value: autoOperation)       
+        sendEvent(name: 'thermostatMode', value: autoOperation)
+        sendEvent(name: 'thermostatFanMode', value: autoOperation)  
         sendEvent(name: 'presence', value: presence)
-    }else if(resp.status == 201){
-        log.debug("Something was created/updated")
+        sendEvent(name: 'humidity', value: 55)
+    }else{
+        log.debug("Executing parseResponse.successFalse")
+    }
+}
+
+private parseHumidityResponse(resp) {
+    log.debug("Executing parseHumidityResponse: "+resp.data)
+    log.debug("Output status: "+resp.status)
+    if(resp.status == 200) {
+    	log.debug("Executing parseHumidityResponse.successTrue")
+        
+        def humidity 
+        if (resp.data.humidity.percentage != null){
+        	humidity = resp.data.humidity.percentage
+        }else{
+        	humidity = "--"
+        }
+        log.debug("Read humidity: " + humidity)
+        
+        sendEvent(name: 'humidity', value: humidity)
+    }else{
+        log.debug("Executing parseHumidityResponse.successFalse")
     }
 }
 
@@ -162,7 +198,8 @@ def poll() {
 
 def refresh() {
 	log.debug "Executing 'refresh'"
-    sendCommand("getCurrentState")
+    statusCommand()
+    humidityStatusCommand()
 }
 
 def auto() {
@@ -202,129 +239,85 @@ def heatingSetpointDown(){
 	setHeatingSetpoint(newSetpoint)
 }
 
+private sendCommand(method, args = []) {
+    def methods = [
+		'status': [
+        			uri: "https://my.tado.com", 
+                    path: "/mobile/1.9/getCurrentState", 
+                    requestContentType: "application/json", 
+                    query: [username:settings.username, password:settings.password]
+                    ],
+        'humidityStatus': [
+        			uri: "https://my.tado.com", 
+                    path: "/api/v1/home/2005/hvacState", 
+                    requestContentType: "application/json", 
+                    query: [username:settings.username, password:settings.password]
+                    ],
+		'thermostat_mode': [	
+        			uri: "https://my.tado.com",
+        			path: "/mobile/1.9/updateThermostatSettings",
+        			requestContentType: "application/json",
+    				query: [username:settings.username, password:settings.password, setMode:args[0]]
+                   	],
+		'temperature': [	
+        			uri: "https://my.tado.com",
+        			path: "/mobile/1.9/updateThermostatSettings",
+        			requestContentType: "application/json",
+    				query: [username:settings.username, password:settings.password, setMode:args[0], manualTemp:args[1]]
+                   	]
+	]
 
-
-private sendCommand(path, method="GET", body=null) {
-    //def accessToken = getAccessToken()
-    def pollParams = [
-        uri: "https://my.tado.com",
-        path: "/mobile/1.9/getCurrentState",
-        requestContentType: "application/json",
-    	query: [username:settings.username, password:settings.password],
-        body: body
-    ]
-    log.debug(method+" Http Params ("+pollParams+")")
+	def request = methods.getAt(method)
+    
+    log.debug "Http Params ("+request+")"
     
     try{
-        if(method=="GET"){
-        	log.debug "Executing 'sendCommand.GET'"
-            httpGet(pollParams) { resp ->            
-                //log.debug resp.data
+        log.debug "Executing 'sendCommand'"
+        
+        if (method == "status"){
+            httpGet(request) { resp ->            
                 parseResponse(resp)
             }
-        }else if(method=="PUT") {
-        	log.debug "Executing 'sendCommand.PUT'"
-            httpPut(pollParams) { resp ->            
-                parseResponse(resp)
+        }else if (method == "humidityStatus"){
+            httpGet(request) { resp ->            
+                parseHumidityResponse(resp)
             }
+        }else{
+            httpGet(request)
         }
     } catch(Exception e){
         debug("___exception: " + e)
     }
 }
 
-
-
 // Commands to device
 
-def autoCommand() {
-    def method = "GET"
-    def pollParams = [
-        uri: "https://my.tado.com",
-        path: "/mobile/1.9/updateThermostatSettings",
-        requestContentType: "application/json",
-    	query: [username:settings.username, password:settings.password, setMode:"AUTO"],
-        body: null
-    ]
-    
-    log.debug(method+" Http Params ("+pollParams+")")
-    
-    try{
-        log.debug "Executing 'sendCommand.setAuto'"
-        httpGet(pollParams) { resp ->            
-            //log.debug resp.data
-            //parseResponse(resp)
-        }        
-    } catch(Exception e){
-    	debug("___exception: " + e)
-    }
+def statusCommand(){
+	log.debug "Executing 'sendCommand.statusCommand'"
+	sendCommand("status",[])
 }
 
-def offCommand() {
-    def method = "GET"
-    def pollParams = [
-        uri: "https://my.tado.com",
-        path: "/mobile/1.9/updateThermostatSettings",
-        requestContentType: "application/json",
-    	query: [username:settings.username, password:settings.password, setMode:"NO_FREEZE"],
-        body: null
-    ]
-    
-    log.debug(method+" Http Params ("+pollParams+")")
-    
-    try{
-        log.debug "Executing 'sendCommand.setOff'"
-        httpGet(pollParams) { resp ->            
-            //log.debug resp.data
-            //parseResponse(resp)
-        }        
-    } catch(Exception e){
-    	debug("___exception: " + e)
-    }
+def autoCommand(){
+	log.debug "Executing 'sendCommand.autoCommand'"
+	sendCommand("thermostat_mode",["AUTO"])
 }
 
-def manualCommand() {
-    def method = "GET"
-    def pollParams = [
-        uri: "https://my.tado.com",
-        path: "/mobile/1.9/updateThermostatSettings",
-        requestContentType: "application/json",
-    	query: [username:settings.username, password:settings.password, setMode:"MANUAL"],
-        body: null
-    ]
-    
-    log.debug(method+" Http Params ("+pollParams+")")
-    
-    try{
-        log.debug "Executing 'sendCommand.setManual'"
-        httpGet(pollParams) { resp ->            
-            //log.debug resp.data
-            //parseResponse(resp)
-        }        
-    } catch(Exception e){
-    	debug("___exception: " + e)
-    }
+def manualCommand(){
+	log.debug "Executing 'sendCommand.manualCommand'"
+	sendCommand("thermostat_mode",["MANUAL"])
 }
 
-def setTempCommand(targetTemperature) {
-    def method = "GET"
-    def pollParams = [
-        uri: "https://my.tado.com",
-        path: "/mobile/1.9/updateThermostatSettings",
-        requestContentType: "application/json",
-    	query: [username:settings.username, password:settings.password, setMode:"MANUAL", manualTemp:targetTemperature],
-        body: null
-    ]
-    
-    log.debug(method+" Http Params ("+pollParams+")")
-    
-    try{
-        log.debug "Executing 'sendCommand.setTempCommand' to ${targetTemperature}"
-        httpGet(pollParams) { resp ->            
-            //log.debug resp.data
-            //parseResponse(resp)
-        }        
-    } catch(Exception e){
-    	debug("___exception: " + e)
-    }
+def setTempCommand(targetTemperature){
+	log.debug "Executing 'sendCommand.setTempCommand' to ${targetTemperature}"
+	sendCommand("temperature",["MANUAL",targetTemperature])
+}
+
+def offCommand(){
+	log.debug "Executing 'sendCommand.offCommand'"
+	sendCommand("thermostat_mode",["NO_FREEZE"])
+}
+
+def humidityStatusCommand(){
+	log.debug "Executing 'sendCommand.humidityStatusCommand'"
+	sendCommand("humidityStatus",[])
 }
