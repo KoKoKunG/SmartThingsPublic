@@ -164,17 +164,16 @@ private parseResponse(resp) {
         sendEvent(name: 'thermostatMode', value: autoOperation)
         sendEvent(name: 'thermostatFanMode', value: autoOperation)  
         sendEvent(name: 'presence', value: presence)
-        sendEvent(name: 'humidity', value: 55)
     }else{
         log.debug("Executing parseResponse.successFalse")
     }
 }
 
-private parseHumidityResponse(resp) {
-    log.debug("Executing parseHumidityResponse: "+resp.data)
+private parseHvacResponse(resp) {
+    log.debug("Executing parseHvacResponse: "+resp.data)
     log.debug("Output status: "+resp.status)
     if(resp.status == 200) {
-    	log.debug("Executing parseHumidityResponse.successTrue")
+    	log.debug("Executing parseHvacResponse.successTrue")
         
         def humidity 
         if (resp.data.humidity.percentage != null){
@@ -186,7 +185,7 @@ private parseHumidityResponse(resp) {
         
         sendEvent(name: 'humidity', value: humidity)
     }else{
-        log.debug("Executing parseHumidityResponse.successFalse")
+        log.debug("Executing parseHvacResponse.successFalse")
     }
 }
 
@@ -199,7 +198,7 @@ def poll() {
 def refresh() {
 	log.debug "Executing 'refresh'"
     statusCommand()
-    humidityStatusCommand()
+    hvacStatusCommand()
 }
 
 def auto() {
@@ -247,7 +246,7 @@ private sendCommand(method, args = []) {
                     requestContentType: "application/json", 
                     query: [username:settings.username, password:settings.password]
                     ],
-        'humidityStatus': [
+        'hvacStatus': [
         			uri: "https://my.tado.com", 
                     path: "/api/v1/home/2005/hvacState", 
                     requestContentType: "application/json", 
@@ -278,9 +277,9 @@ private sendCommand(method, args = []) {
             httpGet(request) { resp ->            
                 parseResponse(resp)
             }
-        }else if (method == "humidityStatus"){
+        }else if (method == "hvacStatus"){
             httpGet(request) { resp ->            
-                parseHumidityResponse(resp)
+                parseHvacResponse(resp)
             }
         }else{
             httpGet(request)
@@ -291,7 +290,6 @@ private sendCommand(method, args = []) {
 }
 
 // Commands to device
-
 def statusCommand(){
 	log.debug "Executing 'sendCommand.statusCommand'"
 	sendCommand("status",[])
@@ -317,7 +315,7 @@ def offCommand(){
 	sendCommand("thermostat_mode",["NO_FREEZE"])
 }
 
-def humidityStatusCommand(){
-	log.debug "Executing 'sendCommand.humidityStatusCommand'"
-	sendCommand("humidityStatus",[])
+def hvacStatusCommand(){
+	log.debug "Executing 'sendCommand.hvacStatusCommand'"
+	sendCommand("hvacStatus",[])
 }
