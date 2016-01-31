@@ -15,7 +15,8 @@
  *	Author: Ian M
  *
  *	Updates: 
- *  2016-01-15  Refactored API request code and added querying/display of humidity
+ *	2016-01-20	Updated hvacStatus to include include the correct HomeId for Humidity Value (Merged from Stuart Buchanan's changes)
+ *	2016-01-15	Refactored API request code and added querying/display of humidity
  *	2015-12-23	Added functionality to change thermostat settings
  *	2015-12-04	Initial release
  */
@@ -28,16 +29,16 @@ preferences {
 metadata {
 	definition (name: "Tado Thermostat", namespace: "ianm", author: "Ian M") {
 		capability "Actuator"
-        capability "Temperature Measurement"
+		capability "Temperature Measurement"
 		capability "Thermostat"
-        capability "Presence Sensor"
+		capability "Presence Sensor"
 		capability "Polling"
 		capability "Refresh"
-        capability "Relative Humidity Measurement"
-        
-        command "heatingSetpointUp"
-        command "heatingSetpointDown"
-        command "auto"
+		capability "Relative Humidity Measurement"
+
+		command "heatingSetpointUp"
+		command "heatingSetpointDown"
+		command "auto"
 	}
 
 	// simulator metadata
@@ -50,14 +51,14 @@ metadata {
 	tiles(scale: 2){
       	multiAttributeTile(name: "thermostat", width: 6, height: 4, type:"lighting") {
 			tileAttribute("device.temperature", key:"PRIMARY_CONTROL", canChangeIcon: true){
-            	attributeState "default", label:'${currentValue}° C', unit:"C", backgroundColor:"#fab907", icon:"st.Home.home1"
+			attributeState "default", label:'${currentValue}° C', unit:"C", backgroundColor:"#fab907", icon:"st.Home.home1"
             }
-            tileAttribute ("thermostatOperatingState", key: "SECONDARY_CONTROL") {
+			tileAttribute ("thermostatOperatingState", key: "SECONDARY_CONTROL") {
 				attributeState "thermostatOperatingState", label:'${currentValue}'
 			}
 		}
-        
-        valueTile("heatingSetpoint", "device.heatingSetpoint", width: 2, height: 1, decoration: "flat") {
+
+		valueTile("heatingSetpoint", "device.heatingSetpoint", width: 2, height: 1, decoration: "flat") {
 			state("default", label: '${currentValue}° C')
 		}
 
@@ -125,6 +126,9 @@ private parseResponse(resp) {
         
         def temperature = Math.round(resp.data.insideTemp)
         log.debug("Read temperature: " + temperature)
+
+		state.homeId = resp.data.homeId
+        log.debug("Got HomeID Value: " + state.homeId)
         
         def controlPhase = resp.data.controlPhase
         if(resp.data.controlPhase == "UNDEFINED"){
@@ -248,7 +252,7 @@ private sendCommand(method, args = []) {
                     ],
         'hvacStatus': [
         			uri: "https://my.tado.com", 
-                    path: "/api/v1/home/2005/hvacState", 
+                    path: "/api/v1/home/" + state.homeId + "/hvacState", 
                     requestContentType: "application/json", 
                     query: [username:settings.username, password:settings.password]
                     ],
